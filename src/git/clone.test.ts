@@ -81,4 +81,12 @@ describe('sanitizeGitError', () => {
   it('is a no-op for clean text', () => {
     expect(sanitizeGitError('Repository not found', undefined)).toContain('Repository not found');
   });
+  it('redacts a Bearer token even when token arg is undefined', () => {
+    const out = sanitizeGitError(
+      'fatal: unable to access: Authorization: Bearer ghp_secret123 rejected',
+      undefined,
+    );
+    expect(out).not.toContain('ghp_secret123');
+    expect(out).toContain('Bearer ***');
+  });
 });
