@@ -1,5 +1,9 @@
 // Pure helpers for the /clone command. No side effects, no relative imports —
 // kept isolated so the URL/auth/sanitizing logic is unit-testable.
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 /** Last path segment of a git URL with one trailing `.git` removed. */
 export function deriveProjectName(gitUrl: string): string {
@@ -83,4 +87,20 @@ export function sanitizeGitError(stderr: string, token: string | undefined): str
   if (token) out = out.split(token).join('***');
   out = out.replace(/AUTHORIZATION:\s*basic\s+\S+/gi, 'AUTHORIZATION: basic ***');
   return out.trim();
+}
+
+/** Clone `gitUrl` into `dest`. Resolves with a sanitized error on failure. */
+export async function runGitClone(
+  gitUrl: string,
+  dest: string,
+  token: string | undefined,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const args = buildGitCloneArgs(gitUrl, dest, token);
+  try {
+    await execFileAsync('git', args, { timeout: 120_000 });
+    return { ok: true };
+  } catch (e) {
+    const stderr = (e as { stderr?: string }).stderr ?? (e as Error).message ?? 'git clone failed';
+    return { ok: false, error: sanitizeGitError(String(stderr), token) };
+  }
 }

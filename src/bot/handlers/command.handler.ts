@@ -57,6 +57,7 @@ import { execFile, spawn } from 'child_process';
 import { sanitizeError, sanitizePath } from '../../utils/sanitize.js';
 import { getWorkspaceRoot, isPathWithinRoot } from '../../utils/workspace-guard.js';
 import { getSessionKeyFromCtx, parseSessionKey } from '../../utils/session-key.js';
+import { deriveProjectName, validateCloneUrl, runGitClone } from '../../git/clone.js';
 
 // Helper for consistent MarkdownV2 replies
 async function replyMd(ctx: Context, text: string): Promise<void> {
@@ -341,6 +342,7 @@ I bridge your messages to Claude Code running on your local machine\\.
 *Commands:*
 • \`/project <path>\` \\- Open a project
 • \`/newproject <name>\` \\- Create a new project
+• \`/clone <url> \\[name\\]\` \\- Clone a git repo and open it
 • \`/clear\` \\- Clear session and start fresh
 • \`/status\` \\- Show current session info
 • \`/commands\` \\- Show all available commands
@@ -730,6 +732,60 @@ export async function handleNewProject(ctx: Context): Promise<void> {
   clearConversation(sessionKey);
 
   await replyMd(ctx, `✅ Created and opened: *${esc(args)}*\n\nYou can now chat with Claude about this project\\!${projectStatusSuffix(sessionKey)}`);
+
+  const s = sessionManager.getSession(sessionKey);
+  if (s?.claudeSessionId) {
+    await replyMd(ctx, resumeCommandMessage(s.claudeSessionId));
+  }
+}
+
+export async function handleClone(ctx: Context): Promise<void> {
+  const keyInfo = getSessionKeyFromCtx(ctx);
+  if (!keyInfo) return;
+  const { sessionKey } = keyInfo;
+
+  const text = ctx.message?.text || '';
+  const parts = text.split(' ').slice(1).filter(Boolean);
+  const gitUrl = parts[0];
+  const explicitName = parts[1];
+
+  if (!gitUrl) {
+    await replyMd(ctx, 'Usage: `/clone <git-url> [name]`');
+    return;
+  }
+
+  const valid = validateCloneUrl(gitUrl, config.ALLOW_PRIVATE_NETWORK_URLS);
+  if (!valid.ok) {
+    await replyMd(ctx, `❌ ${esc(valid.reason)}`);
+    return;
+  }
+
+  const name = (explicitName ?? deriveProjectName(gitUrl)).trim();
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+    await replyMd(ctx, '❌ Could not derive a valid project name\\. Pass one: `/clone <url> <name>`');
+    return;
+  }
+
+  const projectPath = path.join(config.WORKSPACE_DIR, name);
+  if (fs.existsSync(projectPath)) {
+    await replyMd(ctx, `❌ Project "${esc(name)}" already exists\\. Use \`/project ${esc(name)}\` to open it\\.`);
+    return;
+  }
+
+  await replyMd(ctx, `⏳ Cloning *${esc(name)}*…`);
+
+  const result = await runGitClone(gitUrl, projectPath, config.GITHUB_TOKEN);
+  if (!result.ok) {
+    // Clean up any partial clone so a retry is fresh.
+    try { fs.rmSync(projectPath, { recursive: true, force: true }); } catch { /* ignore */ }
+    await replyMd(ctx, `❌ Clone failed:\n\`\`\`\n${esc(result.error)}\n\`\`\``);
+    return;
+  }
+
+  sessionManager.setWorkingDirectory(sessionKey, projectPath);
+  clearConversation(sessionKey);
+
+  await replyMd(ctx, `✅ Cloned and opened: *${esc(name)}*\n\nYou can now chat with Claude about this repo\\!${projectStatusSuffix(sessionKey)}`);
 
   const s = sessionManager.getSession(sessionKey);
   if (s?.claudeSessionId) {

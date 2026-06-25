@@ -11,6 +11,7 @@ import {
   handleClearCallback,
   handleProject,
   handleNewProject,
+  handleClone,
   handleProjectCallback,
   handleStatus,
   handleMode,
@@ -107,6 +108,7 @@ export async function createBot(): Promise<Bot> {
     { command: 'start', description: '🚀 Show help and getting started' },
     { command: 'project', description: '📁 Set working directory' },
     { command: 'newproject', description: '📁 Create a new project' },
+    { command: 'clone', description: '📥 Clone a git repo and open it' },
     { command: 'status', description: '📊 Show current session status' },
     { command: 'clear', description: '🗑️ Clear conversation history' },
     { command: 'cancel', description: '⏹️ Cancel current request' },
@@ -161,6 +163,7 @@ export async function createBot(): Promise<Bot> {
   bot.command('clear', handleClear);
   bot.command('project', handleProject);
   bot.command('newproject', handleNewProject);
+  bot.command('clone', handleClone);
   bot.command('status', handleStatus);
   bot.command('mode', handleMode);
   bot.command('terminalui', handleTerminalUI);
