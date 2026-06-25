@@ -86,6 +86,7 @@ export function sanitizeGitError(stderr: string, token: string | undefined): str
   let out = stderr;
   if (token) out = out.split(token).join('***');
   out = out.replace(/AUTHORIZATION:\s*basic\s+\S+/gi, 'AUTHORIZATION: basic ***');
+  out = out.replace(/Bearer\s+\S+/gi, 'Bearer ***');
   return out.trim();
 }
 

@@ -48,8 +48,11 @@ export async function listOwnedRepos(token: string): Promise<ListReposResult> {
     return { ok: false, error: sanitizeGitError(`GitHub API error (HTTP ${res.status}).`, token) };
   }
 
-  const data = (await res.json()) as GitHubRepoApi[];
-  const repos: Repo[] = data.map((r) => ({
+  const data = (await res.json()) as unknown;
+  if (!Array.isArray(data)) {
+    return { ok: false, error: 'Unexpected response from GitHub.' };
+  }
+  const repos: Repo[] = (data as GitHubRepoApi[]).map((r) => ({
     name: r.name,
     fullName: r.full_name,
     private: r.private,

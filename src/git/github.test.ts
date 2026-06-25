@@ -42,4 +42,14 @@ describe('listOwnedRepos', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).not.toContain('secret-tok');
   });
+
+  it('returns ok:false with a friendly error when the 200 body is not an array', async () => {
+    mockFetch(async () => new Response(JSON.stringify({ message: 'x' }), { status: 200 }));
+    const r = await listOwnedRepos('tok');
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toBeTruthy();
+      expect(r.error).toMatch(/unexpected response/i);
+    }
+  });
 });

@@ -857,7 +857,9 @@ export async function handleRepoCallback(ctx: Context): Promise<void> {
     state.page = data === 'repo:page:next'
       ? Math.min(state.page + 1, totalPages - 1)
       : Math.max(state.page - 1, 0);
-    await ctx.editMessageReplyMarkup({ reply_markup: buildRepoPickerKeyboard(state) });
+    try {
+      await ctx.editMessageReplyMarkup({ reply_markup: buildRepoPickerKeyboard(state) });
+    } catch { /* ignore "message is not modified" */ }
     await ctx.answerCallbackQuery();
     return;
   }
@@ -868,10 +870,14 @@ export async function handleRepoCallback(ctx: Context): Promise<void> {
     if (!result.ok) { await ctx.answerCallbackQuery({ text: 'Refresh failed' }); return; }
     const newState: RepoPickerState = { repos: result.repos, page: 0 };
     repoPickerState.set(sessionKey, newState);
-    await ctx.editMessageReplyMarkup({ reply_markup: buildRepoPickerKeyboard(newState) });
+    try {
+      await ctx.editMessageReplyMarkup({ reply_markup: buildRepoPickerKeyboard(newState) });
+    } catch { /* ignore "message is not modified" */ }
     await ctx.answerCallbackQuery({ text: 'Refreshed' });
     return;
   }
+
+  await ctx.answerCallbackQuery();
 }
 
 function listProjects(): string[] {
