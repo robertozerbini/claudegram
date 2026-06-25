@@ -58,6 +58,8 @@ import { sanitizeError, sanitizePath } from '../../utils/sanitize.js';
 import { getWorkspaceRoot, isPathWithinRoot } from '../../utils/workspace-guard.js';
 import { getSessionKeyFromCtx, parseSessionKey } from '../../utils/session-key.js';
 import { deriveProjectName, validateCloneUrl, runGitClone } from '../../git/clone.js';
+import { listOwnedRepos, type Repo } from '../../git/github.js';
+import { buildRepoPickerKeyboard, PAGE_SIZE, type RepoPickerState } from '../repo-picker.js';
 
 // Helper for consistent MarkdownV2 replies
 async function replyMd(ctx: Context, text: string): Promise<void> {
@@ -125,6 +127,7 @@ type ProjectBrowserState = {
 };
 
 const projectBrowserState = new Map<string, ProjectBrowserState>();
+const repoPickerState = new Map<string, RepoPickerState>();
 
 function botctlExists(): boolean {
   return fs.existsSync(BOTCTL_PATH);
@@ -750,7 +753,7 @@ export async function handleClone(ctx: Context): Promise<void> {
   const explicitName = parts[1];
 
   if (!gitUrl) {
-    await replyMd(ctx, 'Usage: `/clone <git-url> [name]`');
+    await openRepoPicker(ctx, sessionKey);
     return;
   }
 
@@ -761,6 +764,15 @@ export async function handleClone(ctx: Context): Promise<void> {
   }
 
   const name = (explicitName ?? deriveProjectName(gitUrl)).trim();
+  await cloneIntoProject(ctx, sessionKey, gitUrl, name);
+}
+
+async function cloneIntoProject(
+  ctx: Context,
+  sessionKey: string,
+  gitUrl: string,
+  name: string,
+): Promise<void> {
   if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
     await replyMd(ctx, '❌ Could not derive a valid project name\\. Pass one: `/clone <url> <name>`');
     return;
@@ -790,6 +802,75 @@ export async function handleClone(ctx: Context): Promise<void> {
   const s = sessionManager.getSession(sessionKey);
   if (s?.claudeSessionId) {
     await replyMd(ctx, resumeCommandMessage(s.claudeSessionId));
+  }
+}
+
+async function openRepoPicker(ctx: Context, sessionKey: string): Promise<void> {
+  if (!config.GITHUB_TOKEN) {
+    await replyMd(ctx, 'Set `GITHUB_TOKEN` to browse your repos, or clone by URL: `/clone <url>`');
+    return;
+  }
+
+  const result = await listOwnedRepos(config.GITHUB_TOKEN);
+  if (!result.ok) {
+    await replyMd(ctx, `❌ ${esc(result.error)}`);
+    return;
+  }
+  if (result.repos.length === 0) {
+    await replyMd(ctx, 'No repositories found for your account\\.');
+    return;
+  }
+
+  const state: RepoPickerState = { repos: result.repos, page: 0 };
+  repoPickerState.set(sessionKey, state);
+
+  await ctx.reply('📦 Pick a repo to clone:', {
+    reply_markup: buildRepoPickerKeyboard(state),
+  });
+}
+
+export async function handleRepoCallback(ctx: Context): Promise<void> {
+  const keyInfo = getSessionKeyFromCtx(ctx);
+  if (!keyInfo) return;
+  const { sessionKey } = keyInfo;
+
+  const data = ctx.callbackQuery?.data;
+  if (!data || !data.startsWith('repo:')) return;
+
+  const state = repoPickerState.get(sessionKey);
+  const expired = async () =>
+    ctx.answerCallbackQuery({ text: 'Selection expired, run /clone again' });
+
+  if (data.startsWith('repo:open:')) {
+    if (!state) { await expired(); return; }
+    const index = parseInt(data.slice('repo:open:'.length), 10);
+    const repo: Repo | undefined = state.repos[index];
+    if (!repo) { await expired(); return; }
+    await ctx.answerCallbackQuery();
+    await cloneIntoProject(ctx, sessionKey, repo.cloneUrl, repo.name);
+    return;
+  }
+
+  if (data === 'repo:page:prev' || data === 'repo:page:next') {
+    if (!state) { await expired(); return; }
+    const totalPages = Math.max(1, Math.ceil(state.repos.length / PAGE_SIZE));
+    state.page = data === 'repo:page:next'
+      ? Math.min(state.page + 1, totalPages - 1)
+      : Math.max(state.page - 1, 0);
+    await ctx.editMessageReplyMarkup({ reply_markup: buildRepoPickerKeyboard(state) });
+    await ctx.answerCallbackQuery();
+    return;
+  }
+
+  if (data === 'repo:refresh') {
+    if (!config.GITHUB_TOKEN) { await ctx.answerCallbackQuery({ text: 'No GITHUB_TOKEN set' }); return; }
+    const result = await listOwnedRepos(config.GITHUB_TOKEN);
+    if (!result.ok) { await ctx.answerCallbackQuery({ text: 'Refresh failed' }); return; }
+    const newState: RepoPickerState = { repos: result.repos, page: 0 };
+    repoPickerState.set(sessionKey, newState);
+    await ctx.editMessageReplyMarkup({ reply_markup: buildRepoPickerKeyboard(newState) });
+    await ctx.answerCallbackQuery({ text: 'Refreshed' });
+    return;
   }
 }
 

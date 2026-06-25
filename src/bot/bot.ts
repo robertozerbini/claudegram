@@ -54,6 +54,7 @@ import {
   handleRedditActionCallback,
   handleReset,
   handleResetCallback,
+  handleRepoCallback,
 } from './handlers/command.handler.js';
 import { handleMessage } from './handlers/message.handler.js';
 import { handleVoice } from './handlers/voice.handler.js';
@@ -238,6 +239,8 @@ export async function createBot(): Promise<Bot> {
       await handleClearCallback(ctx);
     } else if (data.startsWith('project:')) {
       await handleProjectCallback(ctx);
+    } else if (data.startsWith('repo:')) {
+      await handleRepoCallback(ctx);
     } else if (data.startsWith('medium:')) {
       await handleMediumCallback(ctx);
     } else if (data.startsWith('extract:')) {
