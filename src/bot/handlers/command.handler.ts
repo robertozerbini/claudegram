@@ -342,7 +342,7 @@ I bridge your messages to Claude Code running on your local machine\\.
 *Commands:*
 • \`/project <path>\` \\- Open a project
 • \`/newproject <name>\` \\- Create a new project
-• \`/clone <url> \\[name\\]\` \\- Clone a git repo and open it
+• \`/clone <url> [name]\` \\- Clone a git repo and open it
 • \`/clear\` \\- Clear session and start fresh
 • \`/status\` \\- Show current session info
 • \`/commands\` \\- Show all available commands

@@ -59,7 +59,7 @@ export function getAvailableCommands(): string {
       commands: [
         '• `/project <path>` \\- Set working directory',
         '• `/newproject <name>` \\- Create a new project',
-        '• `/clone <url> \\[name\\]` \\- Clone a git repo and open it',
+        '• `/clone <url> [name]` \\- Clone a git repo and open it',
         '• `/resume` \\- Pick from recent sessions to resume',
         '• `/continue` \\- Resume most recent session',
         '• `/sessions` \\- List all sessions',
