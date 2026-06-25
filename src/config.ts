@@ -21,6 +21,7 @@ const envSchema = z.object({
     .default('')
     .transform((val) => val ? val.split(',').map((id) => parseInt(id.trim(), 10)) : []),
   ANTHROPIC_API_KEY: z.string().optional(), // Optional - uses Claude Max subscription if not set
+  GITHUB_TOKEN: z.string().optional(),       // Optional - enables private GitHub clones via /clone
   // OpenAI (TTS)
   OPENAI_API_KEY: z.string().optional(),
   WORKSPACE_DIR: z.string().default(process.env.HOME || '.'),
