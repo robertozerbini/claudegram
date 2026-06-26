@@ -1,0 +1,30 @@
+# Claudegram on Fly.io — long-polling Telegram bot (no inbound HTTP).
+# Set secrets before deploy:
+#   fly secrets set TELEGRAM_BOT_TOKEN=... ALLOWED_USER_IDS=... ANTHROPIC_API_KEY=...
+app = "claudegram"
+primary_region = "lax"
+
+[build]
+
+# Non-config env. Secrets (tokens/keys) go via `fly secrets set`, not here.
+[env]
+  CLAUDE_USE_BUNDLED_EXECUTABLE = "true"
+  STREAMING_MODE = "streaming"
+  # Optional integrations needing extra setup are off by default in-container:
+  TRANSCRIBE_ENABLED = "false"   # needs external groq_transcribe.py
+  TTS_ENABLED = "false"          # needs GROQ_API_KEY / OPENAI_API_KEY
+  REDDIT_ENABLED = "false"       # needs Reddit bot credentials
+
+# Persist sessions (~/.claudegram) and cloned projects ($HOME) across restarts.
+[mounts]
+  source = "claudegram_data"
+  destination = "/data"
+
+# A polling bot must never auto-stop, and there is no HTTP port to wake it.
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1
+
+[processes]
+  app = "node dist/index.js"
