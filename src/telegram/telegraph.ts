@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { z } from 'zod';
 import { config } from '../config.js';
@@ -26,7 +27,10 @@ const TABLE_PATTERN = /\|.*\|.*\|/; // Detect markdown tables
  */
 export async function initTelegraph(): Promise<void> {
   try {
-    const accountFile = path.join(process.cwd(), '.telegraph-account.json');
+    // Persist alongside other state under $HOME/.claudegram so it survives
+    // restarts and lives on a writable volume (process.cwd() is read-only).
+    const stateDir = path.join(os.homedir(), '.claudegram');
+    const accountFile = path.join(stateDir, '.telegraph-account.json');
 
     if (fs.existsSync(accountFile)) {
       // Load existing account with schema validation
@@ -81,7 +85,8 @@ export async function initTelegraph(): Promise<void> {
       short_name: json.result.short_name || 'Claudegram'
     };
 
-    // Save for future use
+    // Save for future use (ensure state dir exists; cwd may be read-only)
+    fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
     atomicWriteFileSync(accountFile, JSON.stringify(telegraphAccount, null, 2), { mode: 0o600 });
     console.log('[Telegraph] Created new account');
   } catch (error) {

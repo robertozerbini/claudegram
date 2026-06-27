@@ -22,7 +22,9 @@ primary_region = "lax"
 
 # A polling bot must never auto-stop, and there is no HTTP port to wake it.
 [[vm]]
-  memory = "1gb"
+  # The bundled `claude` subprocess can grow to ~500MB during long sessions;
+  # 1GB led to repeated OOM kills that wedged the bot. 2GB gives headroom.
+  memory = "2gb"
   cpu_kind = "shared"
   cpus = 1
 
