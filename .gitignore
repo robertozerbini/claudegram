@@ -16,6 +16,11 @@ CLAUDE.md
 AGENTS.md
 CLAUDE_AGENT_SDK_MIGRATION_MASTER_PLAN.md
 MEDIUM_*.md
+# ...but vendored plugin docs must be tracked (part of the plugin)
+!plugins/**/CLAUDE.md
+!plugins/**/AGENTS.md
+# Claude Code runtime refcount artifacts inside vendored plugins (not source)
+plugins/**/.in_use/
 
 # Local Python scripts (Medium scraper tooling)
 scripts/medium_fetch.py

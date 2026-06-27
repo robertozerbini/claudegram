@@ -50,6 +50,10 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY package.json ./
 
+# Bundled Claude Code plugins (skills/commands/MCP) loaded by the agent at
+# runtime. agent.ts resolves these at /app/plugins relative to dist/.
+COPY plugins/ ./plugins/
+
 # Ensure the home/workspace dir exists even before a volume is attached.
 # `node` (uid 1000) ships with the base image; own /data so the app can write
 # before any volume is mounted.

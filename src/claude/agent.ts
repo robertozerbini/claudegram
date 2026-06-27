@@ -11,8 +11,11 @@ import {
   type HookEvent,
   type HookCallbackMatcher,
   type McpServerConfig,
+  type SdkPluginConfig,
 } from '@anthropic-ai/claude-agent-sdk';
 import * as fs from 'fs';
+import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { sessionManager } from './session-manager.js';
 import { setActiveQuery, clearActiveQuery, isCancelled } from './request-queue.js';
 import type { Context } from 'grammy';
@@ -32,6 +35,17 @@ import { BoundedMap } from '../utils/bounded-map.js';
 
 import type { AgentUsage, AgentResponse, AgentOptions, LoopOptions, ImageAttachment } from '../providers/types.js';
 export type { AgentUsage };
+
+// Claude Code plugins vendored into the repo under plugins/ and shipped in the
+// image (always on). Each is a directory containing .claude-plugin/plugin.json.
+// Resolved relative to this compiled file (dist/claude/agent.js -> <root>/plugins)
+// so it works both in-container (/app/plugins) and in local dev. Missing dirs are
+// skipped, so a checkout without the plugins vendored still runs.
+const BUNDLED_PLUGIN_NAMES = ['superpowers', 'claude-md-management', 'frontend-design', 'github'];
+const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../plugins');
+const bundledPlugins: SdkPluginConfig[] = BUNDLED_PLUGIN_NAMES
+  .map((name) => ({ type: 'local' as const, path: path.join(PLUGIN_ROOT, name) }))
+  .filter((p) => fs.existsSync(path.join(p.path, '.claude-plugin', 'plugin.json')));
 
 interface ConversationMessage {
   role: 'user' | 'assistant';
@@ -473,6 +487,7 @@ export async function sendToAgent(
       ...(config.CLAUDE_USE_BUNDLED_EXECUTABLE ? {} : { pathToClaudeCodeExecutable: config.CLAUDE_EXECUTABLE_PATH }),
       includePartialMessages: config.CLAUDE_SDK_INCLUDE_PARTIAL || getLogLevel() === 'trace',
       hooks,
+      ...(bundledPlugins.length > 0 ? { plugins: bundledPlugins } : {}),
       ...(Object.keys(mcpServers).length > 0 ? { mcpServers } : {}),
       stderr: (data: string) => {
         console.error('[Claude stderr]:', data);
