@@ -1,24 +1,5 @@
-import * as fs from 'fs';
 import * as path from 'path';
-
-function resolvePathWithinRoot(root: string, target: string): string | null {
-  let resolvedRoot: string;
-  try {
-    resolvedRoot = fs.realpathSync(root);
-  } catch {
-    return null;
-  }
-  let resolved: string;
-  try {
-    resolved = fs.realpathSync(target);
-  } catch {
-    resolved = path.resolve(target);
-  }
-  if (resolved !== resolvedRoot && !resolved.startsWith(resolvedRoot + path.sep)) {
-    return null;
-  }
-  return resolved;
-}
+import { resolvePathWithinRoot } from '../utils/workspace-guard.js';
 
 export function resolveTargetDir(args: {
   pathArg?: string;
