@@ -219,7 +219,7 @@ const envSchema = z.object({
     .default('4096')
     .transform((val) => parseInt(val, 10)),
   // Ephemeral Fly.io test environments (/teststart, /teststop, /teststatus)
-  FLY_API_TOKEN: z.string().catch(''),
+  FLY_API_TOKEN: z.string().optional(),
   FLY_TEST_ORG: z.string().default('personal'),
   FLY_TEST_DEFAULT_PORT: z
     .string()
