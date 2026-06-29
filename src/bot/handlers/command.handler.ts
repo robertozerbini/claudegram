@@ -60,6 +60,10 @@ import { getSessionKeyFromCtx, parseSessionKey } from '../../utils/session-key.j
 import { deriveProjectName, validateCloneUrl, runGitClone } from '../../git/clone.js';
 import { listOwnedRepos, type Repo } from '../../git/github.js';
 import { buildRepoPickerKeyboard, PAGE_SIZE, type RepoPickerState } from '../repo-picker.js';
+import { getTestEnv, setTestEnv, clearTestEnv } from '../../fly/test-env.js';
+import { deployApp, destroyApp } from '../../fly/flyctl.js';
+import { generateTestAppName, parseTestStartArgs } from '../../fly/helpers.js';
+import { resolveTargetDir } from '../../fly/resolve-target.js';
 
 // Helper for consistent MarkdownV2 replies
 async function replyMd(ctx: Context, text: string): Promise<void> {
@@ -1376,6 +1380,85 @@ export async function handleRestartCallback(ctx: Context): Promise<void> {
   } else {
     await ctx.answerCallbackQuery();
   }
+}
+
+export async function handleTestStart(ctx: Context): Promise<void> {
+  if (!config.FLY_API_TOKEN) {
+    await replyMd(ctx, '❌ Fly API token not configured\\. Set `FLY_API_TOKEN` via `fly secrets set`\\.');
+    return;
+  }
+
+  const existing = getTestEnv();
+  if (existing) {
+    await replyMd(ctx, `ℹ️ A test environment is already running:\n${esc(existing.url)}\n\nUse /teststop first\\.`);
+    return;
+  }
+
+  const root = getWorkspaceRoot();
+  const sessionKey = getSessionKeyFromCtx(ctx)?.sessionKey;
+  const sessionDir = sessionKey ? sessionManager.getSession(sessionKey)?.workingDirectory : undefined;
+  const argString = (ctx.match as string | undefined)?.trim() ?? '';
+  const { path: pathArg, port } = parseTestStartArgs(argString, config.FLY_TEST_DEFAULT_PORT);
+
+  const resolved = resolveTargetDir({ pathArg, sessionDir, root });
+  if ('error' in resolved) {
+    await replyMd(ctx, `❌ ${esc(resolved.error)}`);
+    return;
+  }
+  const dir = resolved.dir;
+
+  if (!fs.existsSync(path.join(dir, 'Dockerfile'))) {
+    await replyMd(ctx, '❌ No `Dockerfile` in the target project\\. Ask the agent to add one, then retry\\.');
+    return;
+  }
+
+  const appName = generateTestAppName();
+  await replyMd(ctx, `🚀 Deploying \`${esc(path.basename(dir))}\` to \`${esc(appName)}\`\\.\n\n⏳ This can take a few minutes\\.`);
+
+  const TIMEOUT_MS = 10 * 60 * 1000;
+  try {
+    const result = await Promise.race([
+      deployApp({ appName, dir, port, region: config.FLY_TEST_REGION, org: config.FLY_TEST_ORG }),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('Deploy timed out after 10 minutes')), TIMEOUT_MS)),
+    ]);
+    setTestEnv({ appName, url: result.url, targetDir: dir, port, startedAt: Date.now() });
+    await replyMd(ctx, `✅ Test environment ready:\n${esc(result.url)}\n\nUse /teststop to tear it down\\.`);
+  } catch (err) {
+    console.error('[TestStart] Deploy failed:', sanitizeError(err));
+    try { await destroyApp(appName); } catch (e) { console.error('[TestStart] Cleanup failed:', sanitizeError(e)); }
+    await replyMd(ctx, `❌ Deploy failed:\n\`${esc(sanitizeError(err))}\``);
+  }
+}
+
+export async function handleTestStop(ctx: Context): Promise<void> {
+  const env = getTestEnv();
+  if (!env) {
+    await replyMd(ctx, 'ℹ️ No active test environment\\.');
+    return;
+  }
+  await replyMd(ctx, `🧹 Destroying \`${esc(env.appName)}\`\\.\\.\\.`);
+  try {
+    await destroyApp(env.appName);
+    clearTestEnv();
+    await replyMd(ctx, '✅ Test environment destroyed\\.');
+  } catch (err) {
+    console.error('[TestStop] Destroy failed:', sanitizeError(err));
+    clearTestEnv(); // never let local state wedge
+    await replyMd(ctx, `⚠️ Destroy reported an error \\(local state cleared\\):\n\`${esc(sanitizeError(err))}\``);
+  }
+}
+
+export async function handleTestStatus(ctx: Context): Promise<void> {
+  const env = getTestEnv();
+  if (!env) {
+    await replyMd(ctx, 'ℹ️ No active test environment\\. Start one with /teststart\\.');
+    return;
+  }
+  const mins = Math.round((Date.now() - env.startedAt) / 60000);
+  await replyMd(
+    ctx,
+    `🧪 *Test environment active*\n\n*App:* \`${esc(env.appName)}\`\n*URL:* ${esc(env.url)}\n*Uptime:* ${mins} min`,
+  );
 }
 
 export async function handleCancel(ctx: Context): Promise<void> {
