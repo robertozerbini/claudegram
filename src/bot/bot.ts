@@ -55,6 +55,9 @@ import {
   handleReset,
   handleResetCallback,
   handleRepoCallback,
+  handleTestStart,
+  handleTestStop,
+  handleTestStatus,
 } from './handlers/command.handler.js';
 import { handleMessage } from './handlers/message.handler.js';
 import { handleVoice } from './handlers/voice.handler.js';
@@ -171,6 +174,9 @@ export async function createBot(): Promise<Bot> {
   bot.command('tts', handleTTS);
   bot.command('botstatus', handleBotStatus);
   bot.command('restartbot', handleRestartBot);
+  bot.command('teststart', handleTestStart);
+  bot.command('teststop', handleTestStop);
+  bot.command('teststatus', handleTestStatus);
   bot.command('context', handleContext);
 
   bot.command('commands', handleCommands);
