@@ -11,6 +11,7 @@ export type DeployOptions = {
   region: string;
   org: string;
   onProgress?: (line: string) => void;
+  signal?: AbortSignal;
 };
 
 export function buildFlyToml(appName: string, region: string, port: number): string {
@@ -30,7 +31,7 @@ export function buildFlyToml(appName: string, region: string, port: number): str
 
 export function runFly(
   args: string[],
-  opts: { cwd?: string; onProgress?: (line: string) => void } = {},
+  opts: { cwd?: string; onProgress?: (line: string) => void; signal?: AbortSignal } = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const token = config.FLY_API_TOKEN;
@@ -38,6 +39,16 @@ export function runFly(
       cwd: opts.cwd,
       env: { ...process.env, FLY_API_TOKEN: token },
     });
+    const onAbort = () => {
+      try { child.kill('SIGTERM'); } catch { /* already gone */ }
+    };
+    if (opts.signal) {
+      if (opts.signal.aborted) onAbort();
+      else opts.signal.addEventListener('abort', onAbort, { once: true });
+    }
+    const cleanup = () => {
+      if (opts.signal) opts.signal.removeEventListener('abort', onAbort);
+    };
     let stdout = '';
     let stderr = '';
     const onChunk = (buf: Buffer, sink: 'out' | 'err') => {
@@ -51,49 +62,56 @@ export function runFly(
     };
     child.stdout.on('data', (b) => onChunk(b, 'out'));
     child.stderr.on('data', (b) => onChunk(b, 'err'));
-    child.on('error', reject);
-    child.on('close', (code) => resolve({ code: code ?? 1, stdout, stderr }));
+    child.on('error', (err) => { cleanup(); reject(err); });
+    child.on('close', (code) => { cleanup(); resolve({ code: code ?? 1, stdout, stderr }); });
   });
 }
 
 export async function deployApp(opts: DeployOptions): Promise<{ url: string }> {
-  const { appName, dir, port, region, org, onProgress } = opts;
+  const { appName, dir, port, region, org, onProgress, signal } = opts;
 
   // Reuse the project's own fly.toml if present; `--app <appName>` overrides the
   // `app` field on the CLI so we never mutate the user's file. Otherwise generate
-  // a throwaway config in the repo. Either way the app name comes from <appName>.
+  // a throwaway config and remove it afterward so it never lingers in the repo.
+  // NOTE: when the project ships its own fly.toml, that file governs the service
+  // port; the /teststart port arg is intentionally not injected here.
   const ownConfig = path.join(dir, 'fly.toml');
-  let configPath: string;
-  if (fs.existsSync(ownConfig)) {
-    configPath = ownConfig;
-  } else {
-    configPath = path.join(dir, '.fly-test.toml');
+  const usesOwnConfig = fs.existsSync(ownConfig);
+  const configPath = usesOwnConfig ? ownConfig : path.join(dir, '.fly-test.toml');
+  if (!usesOwnConfig) {
     fs.writeFileSync(configPath, buildFlyToml(appName, region, port));
   }
 
-  const create = await runFly(['apps', 'create', appName, '-o', org], { cwd: dir, onProgress });
-  if (create.code !== 0) {
-    throw new Error(`fly apps create failed: ${create.stderr || create.stdout}`);
-  }
+  try {
+    const create = await runFly(['apps', 'create', appName, '-o', org], { cwd: dir, onProgress, signal });
+    if (create.code !== 0) {
+      throw new Error(redactToken(`fly apps create failed: ${create.stderr || create.stdout}`, config.FLY_API_TOKEN));
+    }
 
-  const deploy = await runFly(
-    ['deploy', '--app', appName, '--config', configPath, '--remote-only', '--yes'],
-    { cwd: dir, onProgress },
-  );
-  if (deploy.code !== 0) {
-    throw new Error(`fly deploy failed: ${deploy.stderr || deploy.stdout}`);
+    const deploy = await runFly(
+      ['deploy', '--app', appName, '--config', configPath, '--remote-only', '--yes'],
+      { cwd: dir, onProgress, signal },
+    );
+    if (deploy.code !== 0) {
+      throw new Error(redactToken(`fly deploy failed: ${deploy.stderr || deploy.stdout}`, config.FLY_API_TOKEN));
+    }
+    return { url: `https://${appName}.fly.dev` };
+  } finally {
+    if (!usesOwnConfig) {
+      try { fs.rmSync(configPath, { force: true }); } catch { /* best-effort cleanup */ }
+    }
   }
-  return { url: `https://${appName}.fly.dev` };
 }
 
 export async function destroyApp(appName: string): Promise<void> {
   const res = await runFly(['apps', 'destroy', appName, '--yes']);
   if (res.code !== 0) {
-    throw new Error(`fly apps destroy failed: ${res.stderr || res.stdout}`);
+    const combined = `${res.stderr}\n${res.stdout}`;
+    // An app that doesn't exist is already in the desired state — treat as success
+    // so timeout/restart cleanup never throws on a never-created app.
+    if (/not\s+found|could\s+not\s+find|does\s+not\s+exist|no\s+such/i.test(combined)) {
+      return;
+    }
+    throw new Error(redactToken(`fly apps destroy failed: ${res.stderr || res.stdout}`, config.FLY_API_TOKEN));
   }
-}
-
-export async function appExists(appName: string): Promise<boolean> {
-  const res = await runFly(['status', '--app', appName]);
-  return res.code === 0;
 }

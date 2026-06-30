@@ -25,3 +25,5 @@ plugins/**/.in_use/
 # Local Python scripts (Medium scraper tooling)
 scripts/medium_fetch.py
 scripts/medium_login.py
+
+.fly-test.toml

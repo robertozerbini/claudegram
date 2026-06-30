@@ -10,6 +10,7 @@ export type TestEnv = {
   targetDir: string;
   port: number;
   startedAt: number;
+  status?: 'deploying' | 'ready';
 };
 
 export function testEnvStatePath(): string {
