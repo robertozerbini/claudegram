@@ -140,6 +140,11 @@ export async function createBot(): Promise<Bot> {
     { command: 'terminalui', description: '🖥️ Toggle terminal-style display' },
     { command: 'tts', description: '🔊 Toggle voice replies' },
     { command: 'ping', description: '🏓 Check if bot is responsive' },
+    ...(config.FLY_API_TOKEN ? [
+      { command: 'teststart', description: '🚀 Deploy project to ephemeral Fly.io container' },
+      { command: 'teststop', description: '🛑 Destroy test environment' },
+      { command: 'teststatus', description: '📡 Show test environment status' },
+    ] : []),
     { command: 'commands', description: '📜 List all commands' },
   ];
 
