@@ -218,6 +218,14 @@ const envSchema = z.object({
     .string()
     .default('4096')
     .transform((val) => parseInt(val, 10)),
+  // Ephemeral Fly.io test environments (/teststart, /teststop, /teststatus)
+  FLY_API_TOKEN: z.string().optional(),
+  FLY_TEST_ORG: z.string().default('personal'),
+  FLY_TEST_DEFAULT_PORT: z
+    .string()
+    .default('8080')
+    .transform((val) => parseInt(val, 10)),
+  FLY_TEST_REGION: z.string().default('lax'),
 });
 
 const parsed = envSchema.safeParse(process.env);

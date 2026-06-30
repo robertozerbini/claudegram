@@ -18,6 +18,7 @@ FROM node:20-bookworm-slim
 WORKDIR /app
 
 # System binaries used by /extract, /vreddit, voice, etc.
+#   curl           -> flyctl installer (below)
 #   ffmpeg/ffprobe -> Reddit & media audio/video
 #   yt-dlp         -> /extract (YouTube/TikTok/Instagram)
 #   python3        -> yt-dlp runtime + optional groq_transcribe.py
@@ -25,9 +26,15 @@ WORKDIR /app
 #   gosu           -> drop from root to the unprivileged `node` user at startup
 #   python3-venv   -> lets the agent create per-project venvs (`python3 -m venv`)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ffmpeg python3 python3-pip python3-venv git ca-certificates gosu \
+      curl ffmpeg python3 python3-pip python3-venv git ca-certificates gosu \
     && pip3 install --break-system-packages --no-cache-dir yt-dlp \
     && rm -rf /var/lib/apt/lists/*
+
+# flyctl: lets the in-container agent deploy ephemeral test apps (/teststart).
+# Install to /usr/local so the binary lands in /usr/local/bin (world-executable,
+# already on PATH). The `node` user (unprivileged) must be able to exec it.
+RUN curl -L https://fly.io/install.sh | FLYCTL_INSTALL=/usr/local sh \
+    && { [ -e /usr/local/bin/fly ] || ln -s /usr/local/bin/flyctl /usr/local/bin/fly; }
 
 # Persisted state lives under $HOME:
 #   $HOME/.claudegram/sessions.json  -> session history

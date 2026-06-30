@@ -60,6 +60,10 @@ import { getSessionKeyFromCtx, parseSessionKey } from '../../utils/session-key.j
 import { deriveProjectName, validateCloneUrl, runGitClone } from '../../git/clone.js';
 import { listOwnedRepos, type Repo } from '../../git/github.js';
 import { buildRepoPickerKeyboard, PAGE_SIZE, type RepoPickerState } from '../repo-picker.js';
+import { getTestEnv, setTestEnv, clearTestEnv } from '../../fly/test-env.js';
+import { deployApp, destroyApp } from '../../fly/flyctl.js';
+import { generateTestAppName, parseTestStartArgs } from '../../fly/helpers.js';
+import { resolveTargetDir } from '../../fly/resolve-target.js';
 
 // Helper for consistent MarkdownV2 replies
 async function replyMd(ctx: Context, text: string): Promise<void> {
@@ -1376,6 +1380,144 @@ export async function handleRestartCallback(ctx: Context): Promise<void> {
   } else {
     await ctx.answerCallbackQuery();
   }
+}
+
+// Tracks the in-flight deploy's AbortController so /teststop can cancel a deploy
+// that is still running. Null when no deploy is in progress in THIS process.
+let activeDeployController: AbortController | null = null;
+
+export async function handleTestStart(ctx: Context): Promise<void> {
+  if (!config.FLY_API_TOKEN) {
+    await replyMd(ctx, '❌ Fly API token not configured\\. Set `FLY_API_TOKEN` via `fly secrets set`\\.');
+    return;
+  }
+
+  const existing = getTestEnv();
+  if (existing) {
+    if (existing.status === 'deploying') {
+      await replyMd(ctx, `⏳ A deploy is already in progress for \`${esc(existing.appName)}\`\\. Use /teststop to cancel it first\\.`);
+    } else {
+      await replyMd(ctx, `ℹ️ A test environment is already running:\n${esc(existing.url)}\n\nUse /teststop first\\.`);
+    }
+    return;
+  }
+
+  const root = getWorkspaceRoot();
+  const sessionKey = getSessionKeyFromCtx(ctx)?.sessionKey;
+  const sessionDir = sessionKey ? sessionManager.getSession(sessionKey)?.workingDirectory : undefined;
+  const argString = (ctx.match as string | undefined)?.trim() ?? '';
+  const { path: pathArg, port } = parseTestStartArgs(argString, config.FLY_TEST_DEFAULT_PORT);
+
+  const resolved = resolveTargetDir({ pathArg, sessionDir, root });
+  if ('error' in resolved) {
+    await replyMd(ctx, `❌ ${esc(resolved.error)}`);
+    return;
+  }
+  const dir = resolved.dir;
+
+  if (!fs.existsSync(path.join(dir, 'Dockerfile'))) {
+    await replyMd(ctx, '❌ No `Dockerfile` in the target project\\. Ask the agent to add one, then retry\\.');
+    return;
+  }
+
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return;
+  const threadId = ctx.message?.message_thread_id;
+
+  const appName = generateTestAppName();
+  // Persist a 'deploying' record BEFORE starting: a concurrent /teststart is then
+  // rejected by the already-active guard, and a bot restart mid-deploy leaves a
+  // record on disk so the orphaned app can be reconciled via /teststop.
+  setTestEnv({ appName, url: '', targetDir: dir, port, startedAt: Date.now(), status: 'deploying' });
+  await replyMd(
+    ctx,
+    `🚀 Deploying \`${esc(path.basename(dir))}\` to \`${esc(appName)}\`\\.\n\n⏳ This can take a few minutes\\. I'll message you when it's ready\\.`,
+  );
+
+  // Run the long deploy detached so the per-chat (sequentialized) update stream is
+  // not blocked for the whole deploy. The handler returns immediately.
+  const TIMEOUT_MS = 10 * 60 * 1000;
+  const controller = new AbortController();
+  activeDeployController = controller;
+  void (async () => {
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    try {
+      const result = await deployApp({
+        appName,
+        dir,
+        port,
+        region: config.FLY_TEST_REGION,
+        org: config.FLY_TEST_ORG,
+        signal: controller.signal,
+      });
+      setTestEnv({ appName, url: result.url, targetDir: dir, port, startedAt: Date.now(), status: 'ready' });
+      await ctx.api.sendMessage(
+        chatId,
+        `✅ Test environment ready:\n${esc(result.url)}\n\nUse /teststop to tear it down\\.`,
+        { parse_mode: 'MarkdownV2', message_thread_id: threadId },
+      );
+    } catch (err) {
+      const reason = controller.signal.aborted ? new Error('Deploy cancelled or timed out') : err;
+      console.error('[TestStart] Deploy failed:', sanitizeError(reason));
+      // Tear down whatever may have been created on Fly, then clear local state.
+      try { await destroyApp(appName); } catch (e) { console.error('[TestStart] Cleanup failed:', sanitizeError(e)); }
+      clearTestEnv();
+      await ctx.api
+        .sendMessage(chatId, `❌ Deploy failed:\n\`${esc(sanitizeError(reason))}\``, {
+          parse_mode: 'MarkdownV2',
+          message_thread_id: threadId,
+        })
+        .catch((e) => console.error('[TestStart] Notify failed:', sanitizeError(e)));
+    } finally {
+      clearTimeout(timer);
+      if (activeDeployController === controller) activeDeployController = null;
+    }
+  })();
+}
+
+export async function handleTestStop(ctx: Context): Promise<void> {
+  const env = getTestEnv();
+  if (!env) {
+    await replyMd(ctx, 'ℹ️ No active test environment\\.');
+    return;
+  }
+
+  // If a deploy is in flight in THIS process, cancel it and let the detached task
+  // own the teardown (destroy + clearTestEnv + notify) — avoids double cleanup.
+  if (env.status === 'deploying' && activeDeployController) {
+    activeDeployController.abort();
+    await replyMd(ctx, `🛑 Cancelling in\\-progress deploy of \`${esc(env.appName)}\`\\.\\.\\.`);
+    return;
+  }
+
+  // Otherwise (ready app, or a 'deploying' record orphaned by a restart) destroy now.
+  await replyMd(ctx, `🧹 Destroying \`${esc(env.appName)}\`\\.\\.\\.`);
+  try {
+    await destroyApp(env.appName);
+    clearTestEnv();
+    await replyMd(ctx, '✅ Test environment destroyed\\.');
+  } catch (err) {
+    console.error('[TestStop] Destroy failed:', sanitizeError(err));
+    clearTestEnv(); // never let local state wedge
+    await replyMd(ctx, `⚠️ Destroy reported an error \\(local state cleared\\):\n\`${esc(sanitizeError(err))}\``);
+  }
+}
+
+export async function handleTestStatus(ctx: Context): Promise<void> {
+  const env = getTestEnv();
+  if (!env) {
+    await replyMd(ctx, 'ℹ️ No active test environment\\. Start one with /teststart\\.');
+    return;
+  }
+  const mins = Math.round((Date.now() - env.startedAt) / 60000);
+  if (env.status === 'deploying') {
+    await replyMd(ctx, `🚧 *Deploy in progress*\n\n*App:* \`${esc(env.appName)}\`\n*Elapsed:* ${mins} min`);
+    return;
+  }
+  await replyMd(
+    ctx,
+    `🧪 *Test environment active*\n\n*App:* \`${esc(env.appName)}\`\n*URL:* ${esc(env.url)}\n*Uptime:* ${mins} min`,
+  );
 }
 
 export async function handleCancel(ctx: Context): Promise<void> {
