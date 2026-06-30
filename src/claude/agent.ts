@@ -231,6 +231,17 @@ Use it when the user asks to transcribe, download, or extract media from a URL �
 For voice notes sent directly in chat, the user should use /transcribe instead.
 The user also has an /extract Telegram command for direct use.`;
 
+const FLY_TEST_TOOL_PROMPT = `
+
+Test Environment (Fly.io):
+The user can deploy the CURRENT project to an ephemeral Fly.io container for live testing via the /teststart Telegram command. The reply is a public URL where the running app can be reached.
+For this to work, the project MUST have a \`Dockerfile\` at its root that builds the app and runs it in the foreground, listening on a port (default 8080).
+When the user asks to test, deploy, preview, or get a live URL for their project:
+1. If there is no \`Dockerfile\` at the project root, create one suited to the project's stack. Make the container EXPOSE and have the app listen on the port the user will test (8080 unless they say otherwise), and bind to 0.0.0.0 (not localhost) so Fly can route to it.
+2. Then tell the user to run /teststart — or /teststart <port> if the app listens on a non-default port. They can pass /teststart <path> <port> to target a subdirectory.
+Fly.io builds the image remotely, so the user does NOT need a local Docker daemon. Do not run docker or fly yourself — /teststart handles the build and deploy.
+The user also has /teststop (destroy the test app or cancel an in-progress deploy) and /teststatus (show whether a test env is deploying/running and its URL).`;
+
 const REASONING_SUMMARY_INSTRUCTIONS = `
 
 Reasoning Summary (required when enabled):
@@ -244,6 +255,9 @@ const TOOL_PROMPTS = [
   config.VREDDIT_ENABLED ? REDDIT_VIDEO_TOOL_PROMPT : '',
   config.MEDIUM_ENABLED ? MEDIUM_TOOL_PROMPT : '',
   config.EXTRACT_ENABLED ? EXTRACT_TOOL_PROMPT : '',
+  // Gated on the same token that controls whether /teststart works, so the agent
+  // is only told about the deploy workflow when the bot can actually perform it.
+  config.FLY_API_TOKEN ? FLY_TEST_TOOL_PROMPT : '',
 ].join('');
 
 const SYSTEM_PROMPT = `${BASE_SYSTEM_PROMPT}${TOOL_PROMPTS}${config.CLAUDE_REASONING_SUMMARY ? REASONING_SUMMARY_INSTRUCTIONS : ''}`;
