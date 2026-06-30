@@ -228,7 +228,15 @@ const envSchema = z.object({
   FLY_TEST_REGION: z.string().default('lax'),
 });
 
-const parsed = envSchema.safeParse(process.env);
+// Accept the FLYIO_DEPLOYMENT secret as an alias for FLY_API_TOKEN. The live
+// bot's Fly token secret is named FLYIO_DEPLOYMENT; prefer an explicit
+// FLY_API_TOKEN when present, otherwise fall back to it.
+const envInput = {
+  ...process.env,
+  FLY_API_TOKEN: process.env.FLY_API_TOKEN ?? process.env.FLYIO_DEPLOYMENT,
+};
+
+const parsed = envSchema.safeParse(envInput);
 
 if (!parsed.success) {
   console.error('❌ Invalid environment configuration:');
